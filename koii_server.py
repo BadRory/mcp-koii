@@ -1049,6 +1049,73 @@ def scale_mode_help() -> str:
     """
 
 
+@server.tool()
+def build_pattern_file(
+    output_path: str,
+    device_sku: str,
+    events: List[Dict],
+    project_num: int = 1,
+    pattern: str = "a01",
+    sample_assignments: Optional[List[Dict]] = None,
+    template_backup: Optional[str] = None,
+) -> str:
+    """
+    Build a .ppak project file for the EP-133 containing a programmed pattern,
+    WITHOUT touching the device. This writes a file to disk; load it onto the
+    KO II yourself with Teenage Engineering's EP Sample Tool (drag-and-drop).
+    This tool never sends anything to the device, so it cannot harm it.
+
+    The EP-133 sequencer runs at 96 PPQN (ticks per quarter note), so one bar
+    is 384 ticks: quarter = 96, 8th = 48, 16th = 24.
+
+    Args:
+        output_path: Absolute path to write the .ppak file to.
+        device_sku: Target device SKU (e.g. "TE032AS001"). REQUIRED -- read it
+            from a device backup's meta.json ("device_sku"). A wrong SKU can be
+            rejected by the device. There is no safe default.
+        events: List of hits, each a dict:
+            {"time": <0-383 ticks>, "pad": <1-12>, "velocity": <0-127, default 100>}
+        project_num: Project slot 1-9 (default 1).
+        pattern: Which pattern bank to write: a01, b01, c01 or d01 (default a01).
+        sample_assignments: Optional list of
+            {"group": "a"-"d", "pad": 1-12, "sample_num": 0-999} mapping device
+            samples to pads. Omit to keep the project's existing pad samples.
+        template_backup: Optional path to a device backup (.ppak/.pak) whose pad
+            and settings bytes are preserved, so device-specific pad parameters
+            are not lost. Recommended when you have a backup.
+
+    Returns:
+        A status message with the output path and a decoded summary of the
+        events written (read back from the file to confirm they serialized).
+    """
+    from koii import ppak
+
+    try:
+        project = ppak.EP133Project(device_sku=device_sku, project_num=project_num)
+        if template_backup:
+            project.load_template(template_backup)
+        for a in (sample_assignments or []):
+            project.assign_sample(a["group"], int(a["pad"]), int(a["sample_num"]))
+        for e in events:
+            project.add_event(
+                pattern,
+                int(e["time"]),
+                int(e["pad"]),
+                int(e.get("velocity", 100)),
+            )
+        project.save(output_path)
+        # Read it back to prove the bytes parse.
+        decoded = ppak.parse_ppak_patterns(output_path)
+        written = decoded.get(pattern, [])
+        return (
+            f"Wrote {output_path} (project P{project_num:02d}, pattern {pattern}, "
+            f"SKU {device_sku}). Verified {len(written)} events decode from the "
+            f"file. Load it with the EP Sample Tool. First hits: {written[:8]}"
+        )
+    except (KeyError, ValueError) as exc:
+        return f"Failed to build pattern file: {exc}"
+
+
 # If this script is executed directly, run the server.
 # Placed at the true end of the module so every tool and prompt above is
 # registered before the server starts.
