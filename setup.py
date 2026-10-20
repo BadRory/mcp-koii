@@ -7,9 +7,11 @@ setup(
     description="MCP Interface for EP-133 K.O. II",
     author="Ben Rowell",
     packages=find_packages(),
+    python_requires=">=3.10",
     install_requires=[
-        "mido>=1.2.10",
-        "mcp>=1.5.0",
+        "mido>=1.3.0,<2",
+        "python-rtmidi>=1.5.8",
+        "mcp[cli]>=1.5.0,<2",
     ],
     entry_points={
         "console_scripts": [
@@ -21,8 +23,9 @@ setup(
         "Intended Audience :: Developers",
         "License :: OSI Approved :: MIT License",
         "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.8",
-        "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
+        "Programming Language :: Python :: 3.11",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
     ],
 )

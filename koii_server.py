@@ -78,9 +78,9 @@ async def lifespan(app: FastMCP) -> AsyncIterator[Dict]:
 # Create the MCP server
 server = FastMCP(
     "KOII MCP Server",
-    description="Teenage Engineering EP-133 K.O. II MIDI Interface",
+    instructions="Teenage Engineering EP-133 K.O. II MIDI Interface",
     lifespan=lifespan,
-    dependencies=["mido"],
+    dependencies=["mido", "python-rtmidi"],
 )
 
 @server.tool()
@@ -137,6 +137,60 @@ def disconnect() -> str:
         return f"Successfully disconnected from MIDI device: {port_name}"
     else:
         return "Failed to disconnect from MIDI device"
+
+@server.tool()
+def transport_start() -> str:
+    """
+    Send a MIDI Start message. The KO-II sequencer resets to bar 1 and begins
+    playing the current pattern/scene. Requires the device to be in a mode that
+    follows external MIDI clock/transport.
+
+    Returns:
+        A status message indicating success or failure.
+    """
+    if not midi.connected:
+        return "No MIDI device connected"
+    return "Sent MIDI Start" if midi.send_transport("start") else "Failed to send MIDI Start"
+
+@server.tool()
+def transport_stop() -> str:
+    """
+    Send a MIDI Stop message. The KO-II sequencer halts playback.
+
+    Returns:
+        A status message indicating success or failure.
+    """
+    if not midi.connected:
+        return "No MIDI device connected"
+    return "Sent MIDI Stop" if midi.send_transport("stop") else "Failed to send MIDI Stop"
+
+@server.tool()
+def transport_continue() -> str:
+    """
+    Send a MIDI Continue message. The KO-II sequencer resumes from its current
+    position instead of resetting to bar 1.
+
+    Returns:
+        A status message indicating success or failure.
+    """
+    if not midi.connected:
+        return "No MIDI device connected"
+    return "Sent MIDI Continue" if midi.send_transport("continue") else "Failed to send MIDI Continue"
+
+@server.tool()
+def panic() -> str:
+    """
+    Emergency all-notes-off. Sends note-off for every note (0-127) on every MIDI
+    channel (1-16), plus the All Notes Off and All Sound Off control messages.
+    Use this to silence any stuck/droning notes left behind by an interrupted
+    pattern. Safe to call at any time while connected.
+
+    Returns:
+        A status message indicating success or failure.
+    """
+    if not midi.connected:
+        return "No MIDI device connected"
+    return "Sent all-notes-off on all channels" if midi.panic() else "Failed to send panic"
 
 @server.tool()
 def play_note(
@@ -872,10 +926,6 @@ def drum_pattern_help() -> str:
     - `get_default_pad_configuration()`: See the full pad mapping
     """
 
-# If this script is executed directly, run the server
-if __name__ == "__main__":
-    server.run()
-
 @server.prompt()
 def scale_mode_help() -> str:
     """Provide help on using scale mode."""
@@ -998,3 +1048,9 @@ def scale_mode_help() -> str:
     - If the device display shows different notes than expected, double check your scale configuration on the device
     """
 
+
+# If this script is executed directly, run the server.
+# Placed at the true end of the module so every tool and prompt above is
+# registered before the server starts.
+if __name__ == "__main__":
+    server.run()

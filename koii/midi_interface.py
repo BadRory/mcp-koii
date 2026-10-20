@@ -238,19 +238,22 @@ class MIDIInterface:
             
             # Try to connect to a KO-II port if neither port_name nor port_index provided
             ko_ports = [p for p in available_ports if any(
-                name in p.lower() for name in ["ko", "ko-ii", "ep-133", "teenage"]
+                name in p.lower() for name in ["ko", "ko-ii", "ep-133", "ep133", "teenage"]
             )]
             if ko_ports:
                 self.port = mido.open_output(ko_ports[0])
                 self.connected = True
                 logger.info(f"Connected to MIDI port: {ko_ports[0]}")
                 return True
-            
-            # As a last resort, connect to the first available port
-            self.port = mido.open_output(available_ports[0])
-            self.connected = True
-            logger.info(f"Connected to MIDI port: {available_ports[0]}")
-            return True
+
+            # Do NOT blindly open an unrelated device. Auto-connect only targets a
+            # KO-II; if none is found, make the caller choose a port explicitly so
+            # we never send notes to the wrong instrument.
+            logger.error(
+                "No EP-133 K.O. II port auto-detected. Available ports: "
+                f"{available_ports}. Call connect with an explicit port_name or port_index."
+            )
+            return False
             
         except Exception as e:
             logger.error(f"Failed to connect to MIDI port: {e}")
@@ -402,11 +405,13 @@ class MIDIInterface:
             # Send note on message
             self.port.send(mido.Message('note_on', note=note_num, velocity=velocity, channel=self.channel))
             
-            # Wait for specified duration
-            time.sleep(duration)
-            
-            # Send note off message
-            self.port.send(mido.Message('note_off', note=note_num, velocity=0, channel=self.channel))
+            try:
+                # Wait for specified duration
+                time.sleep(duration)
+            finally:
+                # Always release the note, even if the sleep is interrupted,
+                # so a note can never be left droning.
+                self.port.send(mido.Message('note_off', note=note_num, velocity=0, channel=self.channel))
             
             logger.info(f"Played note {note_num} with velocity {velocity} for {duration} seconds")
             return True
@@ -512,7 +517,60 @@ class MIDIInterface:
         except Exception as e:
             logger.error(f"Error sending MIDI clock: {e}")
             return False
-    
+
+    def send_transport(self, command: str) -> bool:
+        """
+        Send a MIDI transport message to drive the KO-II sequencer.
+
+        Args:
+            command: One of 'start', 'stop', or 'continue'.
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if not self._ensure_connected():
+            return False
+
+        valid = {"start", "stop", "continue"}
+        if command not in valid:
+            logger.error(f"Invalid transport command: {command}. Must be one of {sorted(valid)}.")
+            return False
+
+        try:
+            self.port.send(mido.Message(command))
+            logger.info(f"Sent transport '{command}'")
+            return True
+        except Exception as e:
+            logger.error(f"Error sending transport '{command}': {e}")
+            return False
+
+    def panic(self) -> bool:
+        """
+        Emergency all-notes-off across every channel.
+
+        Sends CC 123 (All Notes Off) and CC 120 (All Sound Off) on all 16
+        channels, then an explicit note_off for every note 0-127 as a belt-and-
+        braces fallback for devices that ignore the CCs. Use to clear any stuck
+        notes left by an interrupted pattern.
+
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if not self._ensure_connected():
+            return False
+
+        try:
+            for ch in range(16):
+                self.port.send(mido.Message('control_change', control=123, value=0, channel=ch))
+                self.port.send(mido.Message('control_change', control=120, value=0, channel=ch))
+                for note in range(128):
+                    self.port.send(mido.Message('note_off', note=note, velocity=0, channel=ch))
+            logger.info("Panic: sent all-notes-off on all channels")
+            return True
+        except Exception as e:
+            logger.error(f"Error during panic: {e}")
+            return False
+
     def pad_to_note(self, pad_reference: str) -> int:
         """
         Convert a pad reference (e.g., 'A0', 'B3', 'C7') to a MIDI note number.
@@ -872,6 +930,11 @@ class MIDIInterface:
             
         except Exception as e:
             logger.error(f"Error playing drum pattern: {e}")
+            # An interrupted pattern may have left notes on; clear them.
+            try:
+                self.panic()
+            except Exception:
+                pass
             return False
     
     def get_default_sound_for_pad(self, pad_reference: str) -> Optional[int]:
